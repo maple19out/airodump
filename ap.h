@@ -3,20 +3,18 @@
 
 #include <string>
 
-class AP
+struct AP
 {
-private:
     std::string bssid;
     int beacons;
     std::string ssid;
 
-public:
+    AP();
     AP(std::string bssid, int beacons, std::string ssid);
     void increment_beacons(void);
     void print_bssid(void);
     void print_beacons(void);
     void print_ssid(void);
-    std::string& get_bssid(void);
     ~AP();
 };
 

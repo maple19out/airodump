@@ -3,16 +3,16 @@
 #include <vector>
 #include <string>
 #include <pcap.h>
+#include <map>
+#include <mutex>
+#include <thread>
+#include <unistd.h>
 #include "wireless.h"
 #include "ap.h"
 
-std::vector<AP> ap_pool;
-
-void hex_dump(uint8_t* addr, int len) {
-    for (int i = 0; i < len; i++)
-        printf("%02x ", addr[i]);
-    printf("\n");
-}
+/* key: bssid, value: ap object */
+std::map<std::string, AP> ap_pool;
+std::mutex ap_mutex;
 
 char hex(int num) {
     char res = '0';
@@ -87,6 +87,22 @@ bool parse(Param* param, int argc, char* argv[]) {
     return true;
 }
 
+void printThread() {
+    while (true) {
+        sleep(1);
+        system("clear");
+        ap_mutex.lock();
+        printf("%s\t\t\t%s\t\t%s\n", "bssid", "beacons", "ssid");
+        for (auto ap = ap_pool.begin(); ap != ap_pool.end(); ap++) {
+            ap->second.print_bssid();
+            ap->second.print_beacons();
+            ap->second.print_ssid();
+        }
+        puts("");
+        ap_mutex.unlock();
+    }
+}
+
 int main(int argc, char* argv[]) {
     if(!parse(&param, argc, argv))
         return -1;
@@ -98,6 +114,9 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    /* execute printing information function as a separate thread */
+    std::thread t(printThread);
+    t.detach();
     while (true) {
         struct pcap_pkthdr* header;
         const u_char* packet;
@@ -108,45 +127,43 @@ int main(int argc, char* argv[]) {
             break;
         }
 
-
         ieee80211_radiotap_header* radiotap = (struct ieee80211_radiotap_header*)packet;
         ieee80211_beacon_frame_header* beacon_header = (struct ieee80211_beacon_frame_header*)((uint8_t*)radiotap + radiotap->it_len);
+        /* check whether it is beacon frame */
         if (ntohs(beacon_header->frame_control) != 0x8000)
             continue;
 
-        //parse bssid
-        uint8_t* bssid_addr = (uint8_t*)(beacon_header) + 0x10;
+        /* parse bssid */
+        uint8_t* bssid_addr = beacon_header->BSS_ID;
         std::string bssid;
         set_bssid(bssid, bssid_addr);
 
-        //parse ssid
-        ieee80211_beacon_frame_body* beacon_body = (struct ieee80211_beacon_frame_body*)((uint8_t*)beacon_header + 0x18);
+        /* check ap_pool. if there is parsed bssid exists, just increment its beacon value */
+        ap_mutex.lock();
+        auto ap = ap_pool.find(bssid);
+        if (ap != ap_pool.end()) {
+            ap->second.increment_beacons();
+            ap_mutex.unlock();
+            continue;
+        }
+        ap_mutex.unlock();
+
+
+        /* parse ssid */
+        ieee80211_beacon_frame_body* beacon_body = (struct ieee80211_beacon_frame_body*)((uint8_t*)beacon_header + sizeof(struct ieee80211_beacon_frame_header));
+        /* check whether there is a ssid field */
         if (beacon_body->Tag_Number[0] != 0)
             continue;
+        /* calculate ssid length */
         int tag_length = (int)*((uint8_t*)(beacon_body->Tag_Number) + 1);
         std::string ssid;
-        set_ssid(ssid,((uint8_t*)(beacon_body->Tag_Number) + 2), tag_length);
+        set_ssid(ssid, ((uint8_t*)(beacon_body->Tag_Number) + 2), tag_length);
 
-        auto iter = ap_pool.begin();
-        for (; iter != ap_pool.end(); iter++) {
-            if ((*iter).get_bssid() == bssid) {
-                (*iter).increment_beacons();
-                break;
-            }
-        }
-        if (iter == ap_pool.end()) {
-            AP ap = AP(bssid, 0, ssid);
-            ap_pool.emplace_back(ap);
-        }
-
-        printf("%s\t\t%s\t%s\n", "bssid", "beacons", "ssid");
-        for (auto iter = ap_pool.begin(); iter != ap_pool.end(); iter++) {
-            (*iter).print_bssid();
-            (*iter).print_beacons();
-            (*iter).print_ssid();
-        }
-        printf("\n");
+        /* insert access point information to ap_pool */
+        AP elem(bssid, 0, ssid);
+        ap_pool[bssid] = elem;
     }
+    pcap_close(pcap);
 
     return 0;
 }

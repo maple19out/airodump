@@ -1,5 +1,9 @@
 #include "ap.h"
 
+AP::AP() {
+
+}
+
 AP::AP(std::string bssid, int beacons, std::string ssid)
 {
     this->bssid = bssid;
@@ -19,17 +23,12 @@ void AP::print_bssid()
 
 void AP::print_beacons()
 {
-    printf("%d\t", beacons);
+    printf("%d\t\t", beacons);
 }
 
 void AP::print_ssid()
 {
     printf("%s\n", ssid.c_str());
-}
-
-std::string &AP::get_bssid()
-{
-    return bssid;
 }
 
 AP::~AP()
